@@ -10,8 +10,13 @@ import (
 )
 
 type Signal struct {
-	Request *http.Request
-	Attempt int
+	Url        string
+	Header     http.Header
+	Body       []byte
+	Method     string
+	Host       string
+	RemoteAddr string
+	Attempt    int
 }
 
 type Signaller struct {

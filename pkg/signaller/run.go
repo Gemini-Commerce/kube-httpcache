@@ -87,17 +87,10 @@ func (b *Signaller) Serve(w http.ResponseWriter, r *http.Request) {
 
 	for _, endpoint := range endpoints {
 		url := fmt.Sprintf("%s://%s:%s%s", b.EndpointScheme, endpoint.Host, endpoint.Port, r.RequestURI)
-		request, err := http.NewRequest(r.Method, url, bytes.NewReader(body))
-		if err != nil {
-			b.errors <- err
-		}
-		request.Header = r.Header.Clone()
-		request.Host = r.Host
-		request.Header.Set("X-Forwarded-For", r.RemoteAddr)
 		signallerQueueLength.Set(float64(len(b.signalQueue)))
 		tt := time.Now()
 
-		b.signalQueue <- Signal{request, 0}
+		b.signalQueue <- Signal{url, r.Header.Clone(), body, r.Method, r.Host, r.RemoteAddr, 0}
 
 		signallerQueueLatency.Observe(time.Since(tt).Seconds())
 	}
@@ -129,13 +122,27 @@ func (b *Signaller) ProcessSignalQueue() {
 	}
 
 	for signal := range b.signalQueue {
-		response, err := client.Do(signal.Request)
+		request, err := http.NewRequest(signal.Method, signal.Url, bytes.NewReader(signal.Body))
+		if err != nil {
+			b.errors <- err
+		}
+		request.Header = signal.Header
+		request.Host = signal.Host
+		request.Header.Set("X-Forwarded-For", signal.RemoteAddr)
+
+		if !b.endpoints.Endpoints.Contains(&watcher.Endpoint{Host: request.URL.Hostname(), Port: request.URL.Port()}) {
+			glog.Warningf("host %s is not in the list of current endpoints, skipped invalidation", request.Host)
+			request.Body.Close()
+			continue
+		}
+
+		response, err := client.Do(request)
 		if err != nil {
 			glog.Errorf("signal broadcast error: %v", err.Error())
 			signallerUpstreamErrorsTotal.Inc()
 			b.Retry(signal)
-		} else if response.StatusCode >= 400 && response.StatusCode <= 599 {
-			glog.Warningf("signal broadcast error: unusual status code from %s: %v", response.Request.URL.Host, response.Status)
+		} else if IsRetryable(response) {
+			glog.Warningf("signal broadcast error: retryable status code from %s: %v", response.Request.URL.Host, response.Status)
 			signallerUpstreamErrorsTotal.Inc()
 			b.Retry(signal)
 		} else {
@@ -152,6 +159,15 @@ func (b *Signaller) ProcessSignalQueue() {
 			}
 		}
 	}
+}
+
+func IsRetryable(resp *http.Response) bool {
+	return resp.StatusCode == 408 ||
+		resp.StatusCode == 429 ||
+		resp.StatusCode == 500 ||
+		resp.StatusCode == 502 ||
+		resp.StatusCode == 503 ||
+		resp.StatusCode == 504
 }
 
 func (b *Signaller) Retry(signal Signal) {
