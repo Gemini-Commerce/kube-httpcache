@@ -124,7 +124,8 @@ func (b *Signaller) ProcessSignalQueue() {
 	for signal := range b.signalQueue {
 		request, err := http.NewRequest(signal.Method, signal.Url, bytes.NewReader(signal.Body))
 		if err != nil {
-			b.errors <- err
+			glog.Errorf("error on creating a new request: %s", err.Error())
+			continue
 		}
 		request.Header = signal.Header
 		request.Host = signal.Host
