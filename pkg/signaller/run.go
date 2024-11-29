@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+
 	"github.com/mittwald/kube-httpcache/pkg/watcher"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -132,7 +133,7 @@ func (b *Signaller) ProcessSignalQueue() {
 		request.Header.Set("X-Forwarded-For", signal.RemoteAddr)
 
 		if !b.endpoints.Endpoints.Contains(&watcher.Endpoint{Host: request.URL.Hostname(), Port: request.URL.Port()}) {
-			glog.Warningf("host %s is not in the list of current endpoints, skipped invalidation", request.Host)
+			glog.Warningf("host %s is not in the list of current endpoints, skipped invalidation", request.URL.Hostname())
 			request.Body.Close()
 			continue
 		}
